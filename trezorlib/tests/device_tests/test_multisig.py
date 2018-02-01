@@ -33,7 +33,6 @@ TXHASH_c6091a = unhexlify('c6091adf4c0c23982a35899a6e58ae11e703eacd7954f588ed4b9
 #
 
 
-@pytest.mark.skip_t2
 class TestMultisig(TrezorTest):
 
     def test_2_of_3(self):
@@ -254,3 +253,56 @@ class TestMultisig(TrezorTest):
             # It should throw Failure 'Pubkey not found in multisig script'
             with pytest.raises(CallException):
                 self.client.sign_tx('Bitcoin', [inp1, ], [out1, ])
+
+    def test_address_n_mismatch(self):
+        # same setup as in test_2_of_3
+
+        self.setup_mnemonic_nopin_nopassphrase()
+
+        node = bip32.deserialize(
+            'xpub661MyMwAqRbcF1zGijBb2K6x9YiJPh58xpcCeLvTxMX6spkY3PcpJ4ABcCyWfskq5DDxM3e6Ez5ePCqG5bnPUXR4wL8TZWyoDaUdiWW7bKy')
+
+        multisig = proto.MultisigRedeemScriptType(
+            pubkeys=[
+                proto.HDNodePathType(node=node, address_n=[1]),
+                proto.HDNodePathType(node=node, address_n=[2]),
+                proto.HDNodePathType(node=node, address_n=[3])
+            ],
+            signatures=[b'', b'', b''],
+            m=2,
+        )
+
+        inp1 = proto.TxInputType(
+            address_n=[1],
+            prev_hash=TXHASH_c6091a,
+            prev_index=1,
+            script_type=proto.InputScriptType.SPENDMULTISIG,
+            multisig=multisig,
+        )
+
+        out1 = proto.TxOutputType(
+            address='12iyMbUb4R2K3gre4dHSrbu5azG5KaqVss',
+            amount=1000,
+            script_type=proto.OutputScriptType.PAYTOADDRESS
+        )
+
+        out2_ok = proto.TxOutputType(
+            address_n=[1],
+            amount=100000 - 1000,
+            script_type=proto.OutputScriptType.PAYTOMULTISIG,  # only for change
+            multisig=multisig,
+        )
+
+        # Test if the transaction can be signed normally
+        (_, serialized_tx) = self.client.sign_tx('Bitcoin', [inp1], [out1, out2_ok])
+
+        out2_err = proto.TxOutputType(
+            address_n=[5],  # should raise error
+            amount=100000 - 1000,
+            script_type=proto.OutputScriptType.PAYTOMULTISIG,
+            multisig=multisig,
+        )
+
+        # Now with a wrong address_n it should trigger an exception
+        with pytest.raises(CallException):
+            self.client.sign_tx('Bitcoin', [inp1], [out1, out2_err])
